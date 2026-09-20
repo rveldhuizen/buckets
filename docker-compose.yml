@@ -13,7 +13,7 @@ services:
     ports:
       - "8181:8080"
     networks:
-      - frontend
+      - nginx-proxy-manager_default
 
 volumes:
   static-buckets-data:
