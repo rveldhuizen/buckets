@@ -1,0 +1,12 @@
+# Put this inside the NGINX server block for one public domain.
+# `static-buckets` is the Docker service name on the shared `proxy` network.
+# It maps https://placeholder.example.com/ to bucket `placeholder`.
+
+location / {
+    proxy_pass http://static-buckets:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Static-Bucket placeholder;
+}
