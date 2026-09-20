@@ -19,6 +19,6 @@ volumes:
   static-buckets-data:
 
 networks:
-  frontend:
+  proxy:
     external: true
-    name: frontend
+    name: nginx-proxy-manager_default
