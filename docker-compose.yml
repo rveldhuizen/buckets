@@ -13,12 +13,12 @@ services:
     ports:
       - "8181:8080"
     networks:
-      - proxy
+      - frontend
 
 volumes:
   static-buckets-data:
 
 networks:
-  proxy:
+  frontend:
     external: true
-    name: proxy
+    name: frontend
