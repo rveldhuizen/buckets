@@ -111,6 +111,42 @@ def delete_bucket(name):
         return jsonify(error="Bucket is not empty. Delete its files from the dashboard first."), 409
     return "", 204
 
+@app.get("/api/buckets/<name>/files")
+def list_bucket_files(name):
+    admin_required()
+    directory = bucket_dir(name)
+
+    if not directory.is_dir():
+        abort(404)
+
+    def walk(current):
+        items = []
+
+        for entry in sorted(
+            current.iterdir(),
+            key=lambda p: (not p.is_dir(), p.name.lower())
+        ):
+            relative = entry.relative_to(directory).as_posix()
+
+            if entry.is_dir():
+                items.append({
+                    "name": entry.name,
+                    "path": relative,
+                    "type": "directory",
+                    "children": walk(entry),
+                })
+            elif entry.is_file():
+                items.append({
+                    "name": entry.name,
+                    "path": relative,
+                    "type": "file",
+                    "size": entry.stat().st_size,
+                })
+
+        return items
+
+    return jsonify(walk(directory))
+
 
 @app.post("/api/buckets/<name>/upload")
 def upload(name):
@@ -157,7 +193,29 @@ def domain_bucket(path):
 
 
 ADMIN_HTML = r'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Static Buckets</title>
-<style>body{font:16px system-ui,sans-serif;max-width:800px;margin:3rem auto;padding:0 1rem;color:#172033}input,button{font:inherit;padding:.55rem;margin:.25rem 0}input{min-width:16rem}button{cursor:pointer}li{margin:.5rem 0;padding:.6rem;background:#f4f7fa;border-radius:.35rem}small{color:#566}</style>
+<style>body{font:16px system-ui,sans-serif;max-width:800px;margin:3rem auto;padding:0 1rem;color:#172033}input,button{font:inherit;padding:.55rem;margin:.25rem 0}input{min-width:16rem}button{cursor:pointer}li{margin:.5rem 0;padding:.6rem;background:#f4f7fa;border-radius:.35rem}small{color:#566}
+.files {
+  margin: .5rem 0 0;
+  padding-left: 1.25rem;
+  background: transparent;
+}
+
+.files li {
+  margin: .2rem 0;
+  padding: .2rem .4rem;
+  background: transparent;
+}
+
+.file-tree {
+  margin: .75rem 0;
+  padding: .6rem;
+  background: #eef2f7;
+  border-radius: .35rem;
+}
+
+.file small {
+  margin-left: .4rem;
+}</style>
 <h1>Static Buckets</h1><p>Create a bucket, then upload <code>index.html</code> and its assets. Use its public path shown below, or configure an NGINX domain route.</p>
 <p><label>Admin token <input id="token" type="password" autocomplete="current-password"></label> <button onclick="load()">Unlock</button></p>
 <form onsubmit="createBucket(event)"><input id="name" placeholder="project-name" pattern="[a-z0-9][a-z0-9-]{1,61}[a-z0-9]" required><button>Create bucket</button></form>
@@ -165,7 +223,97 @@ ADMIN_HTML = r'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name
 <script>
 const t=()=>document.querySelector('#token').value; const msg=x=>document.querySelector('#message').textContent=x;
 async function api(url,opts={}){opts.headers={...(opts.headers||{}),'X-Admin-Token':t()};let r=await fetch(url,opts);if(!r.ok)throw Error((await r.json().catch(()=>({error:r.statusText}))).error);return r.status===204?null:r.json()}
-async function load(){try{let bs=await api('/api/buckets');localStorage.staticBucketsToken=t();document.querySelector('#buckets').innerHTML=bs.map(b=>`<li><b>${b.name}</b> ${b.hasIndex?'✓ published':'placeholder'} — <a href="/b/${b.name}/" target="_blank">/b/${b.name}/</a><br><form onsubmit="upload(event,'${b.name}')"><input name="file" type="file" required><input name="path" placeholder="folder (optional)"><button>Upload</button></form><button onclick="removeBucket('${b.name}')">Remove empty bucket</button></li>`).join('')}catch(e){msg(e.message)}}
+const esc = value => String(value)
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#039;');
+
+const formatSize = bytes => {
+  if (bytes < 1024) return bytes + ' B';
+
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+
+  return value.toFixed(value < 10 ? 1 : 0) + ' ' + units[unit];
+};
+
+function renderFiles(bucket, items) {
+  if (!items.length) {
+    return '<small>This bucket is empty.</small>';
+  }
+
+  return `<ul class="files">${
+    items.map(item => {
+      const url = `/b/${encodeURIComponent(bucket)}/${item.path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}`;
+
+      if (item.type === 'directory') {
+        return `
+          <li class="folder">
+            <details>
+              <summary>📁 ${esc(item.name)}</summary>
+              ${renderFiles(bucket, item.children)}
+            </details>
+          </li>`;
+      }
+
+      return `
+        <li class="file">
+          📄 <a href="${url}" target="_blank" rel="noopener">${esc(item.name)}</a>
+          <small>${formatSize(item.size)}</small>
+        </li>`;
+    }).join('')
+  }</ul>`;
+}
+
+async function load() {
+  try {
+    const bs = await api('/api/buckets');
+    localStorage.staticBucketsToken = t();
+
+    const renderedBuckets = await Promise.all(bs.map(async bucket => {
+      const files = await api(
+        '/api/buckets/' + encodeURIComponent(bucket.name) + '/files'
+      );
+
+      return `
+        <li>
+          <b>${esc(bucket.name)}</b>
+          ${bucket.hasIndex ? '✓ published' : 'placeholder'}
+          — <a href="/b/${encodeURIComponent(bucket.name)}/" target="_blank">/b/${esc(bucket.name)}/</a>
+
+          <form onsubmit="upload(event,'${esc(bucket.name)}')">
+            <input name="file" type="file" required>
+            <input name="path" placeholder="folder (optional)">
+            <button>Upload</button>
+          </form>
+
+          <div class="file-tree">
+            <b>Files</b>
+            ${renderFiles(bucket.name, files)}
+          </div>
+
+          <button onclick="removeBucket('${esc(bucket.name)}')">
+            Remove empty bucket
+          </button>
+        </li>`;
+    }));
+
+    document.querySelector('#buckets').innerHTML = renderedBuckets.join('');
+  } catch (e) {
+    msg(e.message);
+  }
+}
 async function createBucket(e){e.preventDefault();try{await api('/api/buckets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.querySelector('#name').value})});e.target.reset();load()}catch(e){msg(e.message)}}
 async function upload(e,n){e.preventDefault();try{let f=new FormData(e.target);await api('/api/buckets/'+n+'/upload',{method:'POST',body:f});msg('Uploaded.');load()}catch(e){msg(e.message)}}
 async function removeBucket(n){if(!confirm('Remove empty bucket '+n+'?'))return;try{await api('/api/buckets/'+n,{method:'DELETE'});load()}catch(e){msg(e.message)}}
