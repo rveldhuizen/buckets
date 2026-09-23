@@ -111,6 +111,27 @@ def delete_bucket(name):
         return jsonify(error="Bucket is not empty. Delete its files from the dashboard first."), 409
     return "", 204
 
+@app.delete("/api/buckets/<name>/files/<path:relative_path>")
+def delete_bucket_file(name, relative_path):
+    admin_required()
+    directory = bucket_dir(name)
+
+    if not directory.is_dir():
+        abort(404)
+
+    target = (directory / relative_path).resolve()
+
+    # Prevent paths such as ../../something outside the bucket.
+    if target == directory or directory not in target.parents:
+        abort(404)
+
+    # Files only: folders are intentionally not removed by this endpoint.
+    if not target.is_file():
+        abort(404)
+
+    target.unlink()
+    return "", 204
+
 @app.get("/api/buckets/<name>/files")
 def list_bucket_files(name):
     admin_required()
@@ -215,7 +236,19 @@ ADMIN_HTML = r'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name
 
 .file small {
   margin-left: .4rem;
-}</style>
+}
+button.danger {
+  margin-left: .5rem;
+  color: #fff;
+  background: #b42318;
+  border: 0;
+  border-radius: .3rem;
+}
+
+button.danger:hover {
+  background: #8e1b12;
+}
+</style>
 <h1>Static Buckets</h1><p>Create a bucket, then upload <code>index.html</code> and its assets. Use its public path shown below, or configure an NGINX domain route.</p>
 <p><label>Admin token <input id="token" type="password" autocomplete="current-password"></label> <button onclick="load()">Unlock</button></p>
 <form onsubmit="createBucket(event)"><input id="name" placeholder="project-name" pattern="[a-z0-9][a-z0-9-]{1,61}[a-z0-9]" required><button>Create bucket</button></form>
@@ -268,10 +301,17 @@ function renderFiles(bucket, items) {
       }
 
       return `
-        <li class="file">
-          📄 <a href="${url}" target="_blank" rel="noopener">${esc(item.name)}</a>
-          <small>${formatSize(item.size)}</small>
-        </li>`;
+          <li class="file">
+            📄 <a href="${url}" target="_blank" rel="noopener">${esc(item.name)}</a>
+            <small>${formatSize(item.size)}</small>
+            <button
+              type="button"
+              class="danger"
+              onclick='deleteFile(${JSON.stringify(bucket)}, ${JSON.stringify(item.path)})'
+            >
+              Delete
+            </button>
+          </li>`;
     }).join('')
   }</ul>`;
 }
@@ -317,6 +357,26 @@ async function load() {
 async function createBucket(e){e.preventDefault();try{await api('/api/buckets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.querySelector('#name').value})});e.target.reset();load()}catch(e){msg(e.message)}}
 async function upload(e,n){e.preventDefault();try{let f=new FormData(e.target);await api('/api/buckets/'+n+'/upload',{method:'POST',body:f});msg('Uploaded.');load()}catch(e){msg(e.message)}}
 async function removeBucket(n){if(!confirm('Remove empty bucket '+n+'?'))return;try{await api('/api/buckets/'+n,{method:'DELETE'});load()}catch(e){msg(e.message)}}
+async function deleteFile(bucket, path) {
+  if (!confirm(`Delete "${path}"? This cannot be undone.`)) return;
+
+  try {
+    const encodedPath = path
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/');
+
+    await api(
+      '/api/buckets/' + encodeURIComponent(bucket) + '/files/' + encodedPath,
+      { method: 'DELETE' }
+    );
+
+    msg(`Deleted ${path}`);
+    load();
+  } catch (e) {
+    msg(e.message);
+  }
+}
 document.querySelector('#token').value=localStorage.staticBucketsToken||'';
 </script>'''
 
