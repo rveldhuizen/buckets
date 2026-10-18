@@ -1,4 +1,4 @@
-# Portainer Static Buckets
+# Buckets
 
 A small, self-hosted, **S3-like static-site bucket host** for a Raspberry Pi.
 It has a private dashboard to create named buckets and upload files. Each
