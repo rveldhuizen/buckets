@@ -1,7 +1,7 @@
 services:
   static-buckets:
     build: .
-    image: local/buckets:1.0
+    image: ghcr.io/rveldhuizen/buckets:latest
     container_name: buckets
     restart: unless-stopped
     environment:
